@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wheelchair Live Location Map</title>
+  
+  <!-- Leaflet CSS for Map Rendering -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #1a1a1a;
+    }
+
+    /* Full-screen map container */
+    #map {
+      width: 100vw;
+      height: 100vh;
+      background: #121212;
+    }
+
+    /* Floating Status Badge in top-left corner */
+    .status-badge {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(8px);
+      color: #ffffff;
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .status-title {
+      font-weight: 600;
+      color: #3b82f6;
+    }
+
+    .status-coords {
+      font-family: monospace;
+      color: #9ca3af;
+      font-size: 13px;
+    }
+
+    /* Dynamic Marker Smooth Movement & Rotation */
+    .wheelchair-icon {
+      transition: transform 0.2s ease-out;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Minimal Status Overlay -->
+  <div class="status-badge">
+    <div class="status-title">Wheelchair Tracker</div>
+    <div class="status-coords" id="coords-display">Position: X: 0.00m | Y: 0.00m | 0°</div>
+  </div>
+
+  <!-- Map Canvas -->
+  <div id="map"></div>
+
+  <!-- Leaflet JS Library -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    // =========================================================================
+    // CONFIGURATION - CHANGE YOUR MAP SETTINGS HERE
+    // =========================================================================
+    
+    // 1. Name of your image file sitting in the same folder as index.html
+    const IMAGE_URL = 'EVANS HALL.png';
+
+    // 2. Physical dimensions of your room/building image (in meters)
+    // Change these numbers to match the actual size of your map!
+    const MAP_WIDTH_METERS = 30.0;  // Real-world length (X-axis) in meters
+    const MAP_HEIGHT_METERS = 20.0; // Real-world width (Y-axis) in meters
+
+    // =========================================================================
+    // LEAFLET MAP INITIALIZATION
+    // =========================================================================
+
+    // L.CRS.Simple uses a flat 2D metric grid (0,0 is bottom-left of image)
+    const map = L.map('map', {
+      crs: L.CRS.Simple,
+      minZoom: -2,
+      maxZoom: 3,
+      zoomControl: true
+    });
+
+    // Define coordinate bounds: [[Y_min, X_min], [Y_max, X_max]]
+    const imageBounds = [[0, 0], [MAP_HEIGHT_METERS, MAP_WIDTH_METERS]];
+
+    // Load and overlay floorplan.png directly from the folder
+    L.imageOverlay(IMAGE_URL, imageBounds).addTo(map);
+
+    // Center and zoom map to fit floorplan perfectly
+    map.fitBounds(imageBounds);
+
+    // =========================================================================
+    // WHEELCHAIR MARKER SETUP
+    // =========================================================================
+
+    // SVG icon for wheelchair with directional arrow pointing UP (0 deg)
+    const wheelchairSvg = `
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="20" cy="20" r="18" fill="#3B82F6" fill-opacity="0.25" stroke="#3B82F6" stroke-width="2"/>
+        <path d="M20 4 L26 14 L20 11 L14 14 Z" fill="#EF4444"/>
+        <circle cx="20" cy="22" r="6" stroke="white" stroke-width="2.5" fill="none"/>
+        <path d="M20 16 V22 H25" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="20" cy="14" r="2.5" fill="white"/>
+      </svg>
+    `;
+
+    const wheelchairIcon = L.divIcon({
+      html: `<div id="wheelchair-svg-container" class="wheelchair-icon">${wheelchairSvg}</div>`,
+      className: '',
+      iconSize: [40, 40],
+      iconAnchor: [20, 20]
+    });
+
+    // Place initial marker at origin (X=0, Y=0)
+    const wheelchairMarker = L.marker([0, 0], { icon: wheelchairIcon }).addTo(map);
+    const coordsDisplay = document.getElementById('coords-display');
+
+    // =========================================================================
+    // FUNCTION TO UPDATE POSITION (Call this when data arrives!)
+    // =========================================================================
+    /**
+     * Updates wheelchair coordinates and rotates icon
+     * @param {number} x - X coordinate in meters
+     * @param {number} y - Y coordinate in meters
+     * @param {number} headingDeg - Heading angle in degrees (0 = North/Up)
+     */
+    function updatePosition(x, y, headingDeg = 0) {
+      // Leaflet CRS.Simple requires coordinates in [Y, X] order
+      wheelchairMarker.setLatLng([y, x]);
+
+      // Rotate SVG icon
+      const container = document.getElementById('wheelchair-svg-container');
+      if (container) {
+        container.style.transform = `rotate(${headingDeg}deg)`;
+      }
+
+      // Update badge text
+      coordsDisplay.innerText = `Position: X: ${x.toFixed(2)}m | Y: ${y.toFixed(2)}m | ${Math.round(headingDeg)}°`;
+    }
+
+    // Make updatePosition callable globally
+    window.updatePosition = updatePosition;
+
+    // =========================================================================
+    // TEMPORARY TEST LOOP (Simulates receiving fake location updates)
+    // =========================================================================
+    // This loop moves the wheelchair in a circle every 1 second to verify it works.
+    // DELETE OR COMMENT THIS OUT when you connect your real Render backend!
+    let angle = 0;
+    setInterval(() => {
+      angle += 0.05;
+      const testX = (MAP_WIDTH_METERS / 2) + 5 * Math.cos(angle);
+      const testY = (MAP_HEIGHT_METERS / 2) + 5 * Math.sin(angle);
+      const testHeading = ((angle + Math.PI / 2) * (180 / Math.PI)) % 360;
+
+      updatePosition(testX, testY, testHeading);
+    }, 1000);
+
+  </script>
+</body>
+</html>
