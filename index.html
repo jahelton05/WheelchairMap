@@ -39,11 +39,11 @@
       z-index: 1000;
       display: flex;
       justify-content: space-between;
-      align-items: center;
-      pointer-events: none; /* Allows user to drag map under overlay */
+      align-items: flex-start;
+      pointer-events: none; /* Allows dragging map underneath UI elements */
     }
 
-    /* Status Badge */
+    /* Status Badge (Left Side) */
     .status-badge {
       pointer-events: auto;
       background: rgba(0, 0, 0, 0.85);
@@ -92,9 +92,20 @@
       box-shadow: 0 0 8px #22c55e;
     }
 
+    /* Right Column Container (Button + Data Feed) */
+    .right-panel {
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 12px;
+      width: 320px;
+    }
+
     /* Toggle Simulation Button */
     .sim-toggle-btn {
       pointer-events: auto;
+      width: 100%;
       background: rgba(0, 0, 0, 0.85);
       backdrop-filter: blur(8px);
       color: #ffffff;
@@ -106,6 +117,7 @@
       cursor: pointer;
       display: flex;
       align-items: center;
+      justify-content: center;
       gap: 10px;
       transition: all 0.2s ease;
       box-shadow: 0 4px 12px rgba(0,0,0,0.5);
@@ -134,6 +146,106 @@
       background-color: #ffffff;
     }
 
+    /* Location Feed Panel */
+    .feed-panel {
+      pointer-events: auto;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 12px;
+      color: #ffffff;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .feed-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 600;
+      color: #9ca3af;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      padding-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .feed-count {
+      color: #3b82f6;
+      font-family: monospace;
+    }
+
+    .feed-list {
+      max-height: 240px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-family: monospace;
+      font-size: 11px;
+    }
+
+    /* Scrollbar styling for feed */
+    .feed-list::-webkit-scrollbar {
+      width: 4px;
+    }
+    .feed-list::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 2px;
+    }
+
+    .feed-empty {
+      color: #6b7280;
+      font-size: 11px;
+      text-align: center;
+      padding: 12px 0;
+      font-style: italic;
+    }
+
+    .feed-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.05);
+      padding: 6px 8px;
+      border-radius: 4px;
+      border-left: 3px solid #6b7280;
+      animation: fadeIn 0.2s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .feed-item.sim {
+      border-left-color: #3b82f6;
+    }
+
+    .feed-item.jetson {
+      border-left-color: #22c55e;
+    }
+
+    .feed-tag {
+      font-weight: bold;
+      margin-right: 4px;
+    }
+    .feed-tag.sim { color: #60a5fa; }
+    .feed-tag.jetson { color: #4ade80; }
+
+    .feed-time {
+      color: #6b7280;
+    }
+
+    .feed-data {
+      color: #e5e7eb;
+    }
+
     /* Dynamic Marker Smooth Movement */
     .wheelchair-icon {
       transition: transform 0.2s ease-out;
@@ -144,7 +256,7 @@
 
   <!-- Floating UI Overlay -->
   <div class="header-overlay">
-    <!-- Status Badge -->
+    <!-- Status Badge (Left) -->
     <div class="status-badge">
       <div class="status-title">
         <span class="mode-dot" id="mode-dot"></span>
@@ -153,11 +265,25 @@
       <div class="status-coords" id="coords-display">Position: Waiting for Jetson data...</div>
     </div>
 
-    <!-- Simulation Control Button -->
-    <button class="sim-toggle-btn" id="sim-btn" onclick="toggleSimulation()">
-      <span class="btn-icon"></span>
-      <span id="btn-text">Test Simulation: OFF</span>
-    </button>
+    <!-- Controls & Telemetry Feed (Right Column) -->
+    <div class="right-panel">
+      <!-- Simulation Control Button -->
+      <button class="sim-toggle-btn" id="sim-btn" onclick="toggleSimulation()">
+        <span class="btn-icon"></span>
+        <span id="btn-text">Test Simulation: OFF</span>
+      </button>
+
+      <!-- Live Data Stream Feed -->
+      <div class="feed-panel">
+        <div class="feed-header">
+          <span>Telemetry Stream</span>
+          <span class="feed-count" id="feed-count">0 logs</span>
+        </div>
+        <div class="feed-list" id="feed-list">
+          <div class="feed-empty" id="feed-empty">No telemetry data received yet</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Map Canvas -->
@@ -172,9 +298,11 @@
     // =========================================================================
     const IMAGE_URL = 'evansmap.png';
     const MAP_WIDTH_METERS = 200.0;  // Room length (X-axis) in meters
-    const MAP_HEIGHT_METERS = 100.0; // Room width (Y-axis) in meters
+    const MAP_HEIGHT_METERS = 150.0; // Room width (Y-axis) in meters
 
     let isSimulationActive = false;
+    let totalLogs = 0;
+    const MAX_LOGS = 50; // Keeps DOM fast by limiting history length
 
     // =========================================================================
     // LEAFLET MAP INITIALIZATION
@@ -217,6 +345,46 @@
     const statusTitleText = document.getElementById('status-title-text');
 
     // =========================================================================
+    // FEED LOGGER FUNCTION
+    // =========================================================================
+    function logTelemetry(x, y, headingDeg, source) {
+      const feedList = document.getElementById('feed-list');
+      const feedCount = document.getElementById('feed-count');
+      const feedEmpty = document.getElementById('feed-empty');
+
+      if (feedEmpty) {
+        feedEmpty.remove();
+      }
+
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0]; // HH:MM:SS
+      const isSim = source === 'simulation';
+      const tagLabel = isSim ? 'SIM' : 'JET';
+      const tagClass = isSim ? 'sim' : 'jetson';
+
+      const item = document.createElement('div');
+      item.className = `feed-item ${tagClass}`;
+      item.innerHTML = `
+        <div>
+          <span class="feed-tag ${tagClass}">[${tagLabel}]</span>
+          <span class="feed-time">${timeStr}</span>
+        </div>
+        <div class="feed-data">X:${x.toFixed(1)} Y:${y.toFixed(1)} θ:${Math.round(headingDeg)}°</div>
+      `;
+
+      // Prepend to top of feed list
+      feedList.insertBefore(item, feedList.firstChild);
+      totalLogs++;
+
+      // Prune list if exceeding maximum limit
+      while (feedList.children.length > MAX_LOGS) {
+        feedList.removeChild(feedList.lastChild);
+      }
+
+      feedCount.innerText = `${totalLogs} logs`;
+    }
+
+    // =========================================================================
     // UPDATE POSITION FUNCTION
     // =========================================================================
     function updatePosition(x, y, headingDeg = 0, source = 'jetson') {
@@ -236,6 +404,9 @@
       }
 
       coordsDisplay.innerText = `X: ${x.toFixed(2)}m | Y: ${y.toFixed(2)}m | ${Math.round(headingDeg)}°`;
+
+      // Record to telemetry log feed
+      logTelemetry(x, y, headingDeg, source);
     }
 
     // =========================================================================
@@ -243,7 +414,7 @@
     // =========================================================================
     async function toggleSimulation() {
       const newState = !isSimulationActive;
-      
+
       try {
         await fetch('/api/simulation', {
           method: 'POST',
@@ -289,7 +460,7 @@
       socket.onmessage = function(event) {
         try {
           const data = JSON.parse(event.data);
-          
+
           if (data.type === 'mode_change') {
             updateButtonUI(data.simulation_active);
           } else if (data.type === 'location') {

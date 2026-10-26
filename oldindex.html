@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wheelchair Live Location Map</title>
+
+  <!-- Leaflet CSS for Map Rendering -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #1a1a1a;
+    }
+
+    /* Full-screen map container */
+    #map {
+      width: 100vw;
+      height: 100vh;
+      background: #121212;
+    }
+
+    /* Floating Header Overlay */
+    .header-overlay {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      right: 16px;
+      z-index: 1000;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: none; /* Allows user to drag map under overlay */
+    }
+
+    /* Status Badge */
+    .status-badge {
+      pointer-events: auto;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      color: #ffffff;
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+
+    .status-title {
+      font-weight: 600;
+      color: #3b82f6;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-coords {
+      font-family: monospace;
+      color: #9ca3af;
+      font-size: 13px;
+    }
+
+    /* Mode Indicator LED Dot */
+    .mode-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #eab308; /* Yellow = waiting */
+      display: inline-block;
+    }
+
+    .mode-dot.sim {
+      background-color: #3b82f6; /* Blue = simulation */
+      box-shadow: 0 0 8px #3b82f6;
+    }
+
+    .mode-dot.jetson {
+      background-color: #22c55e; /* Green = live Jetson */
+      box-shadow: 0 0 8px #22c55e;
+    }
+
+    /* Toggle Simulation Button */
+    .sim-toggle-btn {
+      pointer-events: auto;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+
+    .sim-toggle-btn:hover {
+      background: rgba(30, 30, 30, 0.95);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+
+    .sim-toggle-btn.active {
+      background: #2563eb;
+      border-color: #60a5fa;
+      color: #ffffff;
+      box-shadow: 0 0 15px rgba(37, 99, 235, 0.5);
+    }
+
+    .btn-icon {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background-color: #6b7280;
+    }
+
+    .sim-toggle-btn.active .btn-icon {
+      background-color: #ffffff;
+    }
+
+    /* Dynamic Marker Smooth Movement */
+    .wheelchair-icon {
+      transition: transform 0.2s ease-out;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Floating UI Overlay -->
+  <div class="header-overlay">
+    <!-- Status Badge -->
+    <div class="status-badge">
+      <div class="status-title">
+        <span class="mode-dot" id="mode-dot"></span>
+        <span id="status-title-text">Wheelchair Tracker</span>
+      </div>
+      <div class="status-coords" id="coords-display">Position: Waiting for Jetson data...</div>
+    </div>
+
+    <!-- Simulation Control Button -->
+    <button class="sim-toggle-btn" id="sim-btn" onclick="toggleSimulation()">
+      <span class="btn-icon"></span>
+      <span id="btn-text">Test Simulation: OFF</span>
+    </button>
+  </div>
+
+  <!-- Map Canvas -->
+  <div id="map"></div>
+
+  <!-- Leaflet JS Library -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    // =========================================================================
+    // CONFIGURATION
+    // =========================================================================
+    const IMAGE_URL = 'evansmap.png';
+    const MAP_WIDTH_METERS = 200.0;  // Room length (X-axis) in meters
+    const MAP_HEIGHT_METERS = 150.0; // Room width (Y-axis) in meters
+
+    let isSimulationActive = false;
+
+    // =========================================================================
+    // LEAFLET MAP INITIALIZATION
+    // =========================================================================
+    const map = L.map('map', {
+      crs: L.CRS.Simple,
+      minZoom: -2,
+      maxZoom: 3,
+      zoomControl: true
+    });
+
+    const imageBounds = [[0, 0], [MAP_HEIGHT_METERS, MAP_WIDTH_METERS]];
+    L.imageOverlay(IMAGE_URL, imageBounds).addTo(map);
+    map.fitBounds(imageBounds, { padding: [0, 0] });
+    map.setMaxBounds(imageBounds);
+
+    // =========================================================================
+    // WHEELCHAIR MARKER SETUP
+    // =========================================================================
+    const wheelchairSvg = `
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="20" cy="20" r="18" fill="#3B82F6" fill-opacity="0.25" stroke="#3B82F6" stroke-width="2"/>
+        <path d="M20 4 L26 14 L20 11 L14 14 Z" fill="#EF4444"/>
+        <circle cx="20" cy="22" r="6" stroke="white" stroke-width="2.5" fill="none"/>
+        <path d="M20 16 V22 H25" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="20" cy="14" r="2.5" fill="white"/>
+      </svg>
+    `;
+
+    const wheelchairIcon = L.divIcon({
+      html: `<div id="wheelchair-svg-container" class="wheelchair-icon">${wheelchairSvg}</div>`,
+      className: '',
+      iconSize: [40, 40],
+      iconAnchor: [20, 20]
+    });
+
+    const wheelchairMarker = L.marker([0, 0], { icon: wheelchairIcon }).addTo(map);
+    const coordsDisplay = document.getElementById('coords-display');
+    const modeDot = document.getElementById('mode-dot');
+    const statusTitleText = document.getElementById('status-title-text');
+
+    // =========================================================================
+    // UPDATE POSITION FUNCTION
+    // =========================================================================
+    function updatePosition(x, y, headingDeg = 0, source = 'jetson') {
+      wheelchairMarker.setLatLng([y, x]);
+
+      const container = document.getElementById('wheelchair-svg-container');
+      if (container) {
+        container.style.transform = `rotate(${headingDeg}deg)`;
+      }
+
+      if (source === 'simulation') {
+        modeDot.className = 'mode-dot sim';
+        statusTitleText.innerText = 'Tracker (Simulation Mode)';
+      } else {
+        modeDot.className = 'mode-dot jetson';
+        statusTitleText.innerText = 'Tracker (Live Jetson)';
+      }
+
+      coordsDisplay.innerText = `X: ${x.toFixed(2)}m | Y: ${y.toFixed(2)}m | ${Math.round(headingDeg)}°`;
+    }
+
+    // =========================================================================
+    // SIMULATION TOGGLE BUTTON LOGIC
+    // =========================================================================
+    async function toggleSimulation() {
+      const newState = !isSimulationActive;
+      
+      try {
+        await fetch('/api/simulation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ active: newState })
+        });
+      } catch (err) {
+        console.error("Failed to toggle simulation mode:", err);
+      }
+    }
+
+    function updateButtonUI(active) {
+      isSimulationActive = active;
+      const btn = document.getElementById('sim-btn');
+      const btnText = document.getElementById('btn-text');
+
+      if (active) {
+        btn.classList.add('active');
+        btnText.innerText = 'Test Simulation: ON';
+      } else {
+        btn.classList.remove('active');
+        btnText.innerText = 'Test Simulation: OFF';
+        modeDot.className = 'mode-dot';
+        statusTitleText.innerText = 'Wheelchair Tracker';
+        coordsDisplay.innerText = 'Position: Waiting for Jetson data...';
+      }
+    }
+
+    // =========================================================================
+    // LIVE WEBSOCKET CONNECTION
+    // =========================================================================
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    let socket;
+
+    function connectWebSocket() {
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = function() {
+        console.log("Connected to wheelchair tracking WebSocket!");
+      };
+
+      socket.onmessage = function(event) {
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (data.type === 'mode_change') {
+            updateButtonUI(data.simulation_active);
+          } else if (data.type === 'location') {
+            updatePosition(data.x, data.y, data.heading || 0, data.source);
+          }
+        } catch (err) {
+          console.error("Error parsing WebSocket data:", err);
+        }
+      };
+
+      socket.onclose = function() {
+        console.log("WebSocket disconnected. Retrying in 2 seconds...");
+        setTimeout(connectWebSocket, 2000);
+      };
+
+      socket.onerror = function(err) {
+        console.error("WebSocket error:", err);
+        socket.close();
+      };
+    }
+
+    connectWebSocket();
+  </script>
+</body>
+</html>
