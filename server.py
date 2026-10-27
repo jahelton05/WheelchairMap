@@ -32,49 +32,57 @@ manager = ConnectionManager()
 
 # --- BACKGROUND TEST DATA LOOP ---
 async def read_testdata_loop():
-    """Continuously reads testdata.txt line-by-line only when simulation_active is True."""
+    """Reads testdata.txt line-by-line ONCE when simulation_active is enabled."""
     global simulation_active
     file_path = "testdata.txt"
 
     while True:
-        if simulation_active and os.path.exists(file_path):
-            try:
-                with open(file_path, "r") as f:
-                    lines = f.readlines()
+        if simulation_active:
+            if os.path.exists(file_path):
+                try:
+                    with open(file_path, "r") as f:
+                        lines = f.readlines()
 
-                for line in lines:
-                    # Check if user turned off simulation mid-loop
-                    if not simulation_active:
-                        break
+                    for line in lines:
+                        # Check if user turned off simulation mid-run
+                        if not simulation_active:
+                            break
 
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
 
-                    parts = [p.strip() for p in line.split(",")]
-                    if len(parts) >= 2:
-                        x = float(parts[0])
-                        y = float(parts[1])
-                        heading = float(parts[2]) if len(parts) >= 3 else 0.0
+                        parts = [p.strip() for p in line.split(",")]
+                        if len(parts) >= 2:
+                            x = float(parts[0])
+                            y = float(parts[1])
+                            heading = float(parts[2]) if len(parts) >= 3 else 0.0
 
-                        payload = json.dumps({
-                            "type": "location",
-                            "source": "simulation",
-                            "x": x,
-                            "y": y,
-                            "heading": heading
-                        })
-                        await manager.broadcast(payload)
-                        
-                        # Speed of playback in simulation mode (1 second delay)
-                        await asyncio.sleep(1.0)
+                            payload = json.dumps({
+                                "type": "location",
+                                "source": "simulation",
+                                "x": x,
+                                "y": y,
+                                "heading": heading
+                            })
+                            await manager.broadcast(payload)
 
-            except Exception as e:
-                print(f"Error reading {file_path}: {e}")
-                await asyncio.sleep(2.0)
+                            # Speed of playback (1 second per coordinate step)
+                            await asyncio.sleep(1.0)
+
+                except Exception as e:
+                    print(f"Error reading {file_path}: {e}")
+
+            # Once file reading finishes (or if file doesn't exist), turn off simulation mode
+            if simulation_active:
+                simulation_active = False
+                await manager.broadcast(json.dumps({
+                    "type": "mode_change",
+                    "simulation_active": False
+                }))
         else:
-            # Idle loop check when simulation is off
-            await asyncio.sleep(0.5)
+            # Idle sleep when simulation is inactive
+            await asyncio.sleep(0.2)
 
 # Server lifecycle manager
 @asynccontextmanager
@@ -90,7 +98,7 @@ app = FastAPI(lifespan=lifespan)
 async def toggle_simulation(data: dict):
     global simulation_active
     simulation_active = bool(data.get("active", False))
-    
+
     # Broadcast state update to all open web clients
     await manager.broadcast(json.dumps({
         "type": "mode_change",
@@ -102,7 +110,7 @@ async def toggle_simulation(data: dict):
 @app.post("/api/location")
 async def receive_jetson_location(data: dict):
     global simulation_active
-    
+
     # Process Jetson coordinates only if simulation is NOT active
     if not simulation_active:
         x = data.get("x", 0.0)
@@ -118,20 +126,20 @@ async def receive_jetson_location(data: dict):
         })
         await manager.broadcast(payload)
         return {"status": "success", "source": "jetson"}
-    
+
     return {"status": "ignored", "reason": "Simulation mode currently active"}
 
 # --- WEBSOCKET ENDPOINT ---
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
-    
+
     # Send current simulation status upon connecting
     await websocket.send_text(json.dumps({
         "type": "mode_change",
         "simulation_active": simulation_active
     }))
-    
+
     try:
         while True:
             await websocket.receive_text()  # Keep connection alive
